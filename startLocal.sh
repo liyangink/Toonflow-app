@@ -4,11 +4,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 bunBinary=""
-if command -v bun >/dev/null 2>&1 && [[ "$(bun --version)" == "1.3.14" ]]; then
+if command -v bun >/dev/null 2>&1 && [[ "$(bun --version)" == "1.4.3" ]]; then
   bunBinary="$(command -v bun)"
 else
   for candidate in "$HOME"/.npm/_npx/*/node_modules/.bin/bun; do
-    if [[ -x "$candidate" && "$("$candidate" --version)" == "1.3.14" ]]; then
+    if [[ -x "$candidate" && "$("$candidate" --version)" == "1.4.3" ]]; then
       bunBinary="$candidate"
       break
     fi
@@ -16,7 +16,7 @@ else
 fi
 
 if [[ -z "$bunBinary" ]]; then
-  echo "未找到 Bun 1.3.14，请先安装项目要求的 Bun 版本。" >&2
+  echo "未找到 Bun 1.4.3，请先安装项目要求的 Bun 版本。" >&2
   exit 1
 fi
 
