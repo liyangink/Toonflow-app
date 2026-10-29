@@ -1,6 +1,7 @@
 import { t, translateMessage } from "@/lib/i18n";
 import { mkdir, readFile, realpath, stat, unlink } from "@toonflow/file";
 import { join, relative } from "node:path";
+import { z } from "zod";
 import { mediaProviders, type Provider } from "@toonflow/providers";
 import type { GeneratedMedia, MediaGenerationRequest, MediaModel, MediaReference } from "@toonflow/tools-scaffold/runtime";
 import conf from "@/utils/conf";
@@ -10,6 +11,15 @@ import { beginGeneration, getProviderPrice } from "@/utils/media/billing";
 import { detectMimeType, readPriceReference } from "@/utils/media/priceReference";
 
 const maxMediaSize = 100 * 1024 * 1024;
+const videoSizesSchema = z.array(z.string().regex(/^\d{2,4}×\d{2,4}$/)).max(32).optional();
+const videoParametersSchema = z.array(z.strictObject({
+  field: z.string().regex(/^[a-z][a-zA-Z0-9]{0,63}$/),
+  label: z.string().min(1).max(100),
+  type: z.enum(["integer", "uint64"]),
+  min: z.union([z.number().finite(), z.string().regex(/^\d{1,20}$/)]),
+  max: z.union([z.number().finite(), z.string().regex(/^\d{1,20}$/)]),
+})).max(16).optional();
+const videoReferenceLimitsSchema = z.strictObject({ total: z.number().int().positive().max(256), audioRequiresVisual: z.boolean() }).optional();
 const mediaExtensions: Record<string, string> = {
   "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif",
   "image/avif": "avif", "image/bmp": "bmp", "image/tiff": "tiff",
@@ -35,10 +45,18 @@ export async function listMediaModels(): Promise<MediaModel[]> {
   return installedProviders.flatMap(provider => provider.models.flatMap(model => {
     if (model.type !== "image" && model.type !== "video" && model.type !== "audio") return [];
     const builtIn = (mediaProviders as readonly Provider[]).find(item => item.id === provider.id)?.models.find(item => item.id === model.id);
+    const videoSizes = videoSizesSchema.safeParse(model.videoSizes);
+    const videoParameters = videoParametersSchema.safeParse(model.videoParameters);
+    const videoReferenceLimits = videoReferenceLimitsSchema.safeParse(model.videoReferenceLimits);
     return [{
       providerId: provider.id, providerLabel: provider.label, modelId: model.id, label: model.label, type: model.type,
       supportsPrice: "supportsPrice" in provider && provider.supportsPrice === true,
       mode: model.mode, durationResolutionMap: model.durationResolutionMap, audio: model.audio,
+      ...(model.type === "video" ? {
+        videoSizes: videoSizes.success ? videoSizes.data : undefined,
+        videoParameters: videoParameters.success ? videoParameters.data : undefined,
+        videoReferenceLimits: videoReferenceLimits.success ? videoReferenceLimits.data : undefined,
+      } : {}),
       ...(model.type === "audio" ? { voices: model.voices } : {}),
       ...(model.type === "image" ? {
         imageSizes: imageOptions(Array.isArray(model.imageSizes) ? model.imageSizes : builtIn?.imageSizes, /^[^\u0000-\u001f\u007f]+$/),
@@ -131,6 +149,7 @@ async function prepareRequest<T>(directory: string | undefined, mediaType: "imag
     firstFrame: (await references(request.firstFrame ? [request.firstFrame] : undefined, "image"))?.[0],
     lastFrame: (await references(request.lastFrame ? [request.lastFrame] : undefined, "image"))?.[0],
     ratio: request.ratio, resolution: request.resolution, duration: request.duration, generateAudio: request.generateAudio, mode: request.mode,
+    other: request.other, referenceBindings: request.referenceBindings,
   };
 }
 

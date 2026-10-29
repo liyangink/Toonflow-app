@@ -88,6 +88,9 @@ export interface MediaModel {
   imageSizes?: string[];
   imageRatios?: string[];
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
+  videoSizes?: string[];
+  videoParameters?: { field: string; label: string; type: "integer" | "uint64"; min: number | string; max: number | string }[];
+  videoReferenceLimits?: { total: number; audioRequiresVisual: boolean };
   audio?: boolean | "optional";
   voices?: { title: string; voice: string }[];
 }
@@ -95,6 +98,15 @@ export interface MediaModel {
 export interface MediaReference {
   path: string;
   mimeType: string;
+}
+
+export interface VideoReferenceBinding {
+  number: number;
+  type: "image" | "video" | "audio" | "text";
+  index?: number;
+  role?: "firstFrame" | "lastFrame";
+  kind?: "silentVideo" | "video" | "videoWithAudio";
+  audioNumber?: number;
 }
 
 export interface MediaGenerationRequest {
@@ -121,6 +133,8 @@ export interface MediaGenerationRequest {
   sampleRate?: number;
   mode?: "singleImage" | "startEndRequired" | "endFrameOptional" | "startFrameOptional" | "text"
     | (`${"image" | "video" | "audio"}Reference:${number}`)[];
+  other?: Record<string, string | number>;
+  referenceBindings?: VideoReferenceBinding[];
 }
 
 export interface GeneratedMedia {

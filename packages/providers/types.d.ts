@@ -22,6 +22,9 @@ interface ProviderModel {
   imageSizes?: string[];
   imageRatios?: string[];
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
+  videoSizes?: string[];
+  videoParameters?: { field: string; label: string; type: "integer" | "uint64"; min: number | string; max: number | string }[];
+  videoReferenceLimits?: { total: number; audioRequiresVisual: boolean };
   voices?: { title: string; voice: string }[];
 }
 
@@ -142,6 +145,14 @@ interface VideoRequest extends MediaRequest {
   resolution?: string;
   generateAudio?: boolean;
   watermark?: boolean;
+  referenceBindings?: {
+    number: number;
+    type: "image" | "video" | "audio" | "text";
+    index?: number;
+    role?: "firstFrame" | "lastFrame";
+    kind?: "silentVideo" | "video" | "videoWithAudio";
+    audioNumber?: number;
+  }[];
 }
 
 /** 基础音频生成参数；text、prompt 至少提供一项，非空校验与模型能力检查由供应商负责。 */

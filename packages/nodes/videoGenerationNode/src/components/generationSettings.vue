@@ -2,8 +2,8 @@
   <el-popover v-model:visible="settingsVisible" trigger="click" placement="top-start" width="min(340px, calc(100vw - 24px))" :disabled="disabled" :showArrow="false" :popperStyle="{ padding: '14px' }">
     <template #reference>
       <el-button class="settingsButton" text size="small" :disabled="disabled" :aria-expanded="settingsVisible" aria-label="视频生成设置">
-        <span class="ratioShape" :style="ratioStyle(ratio)" aria-hidden="true" />
-        <span>{{ [ratio, resolution, duration ? `${duration}秒` : ''].filter(Boolean).join(' · ') }}</span>
+        <span class="ratioShape" :style="ratioStyle(model?.videoSizes?.length ? videoSize.replace('×', ':') : ratio)" aria-hidden="true" />
+        <span>{{ [model?.videoSizes?.length ? videoSize : ratio, model?.videoSizes?.length ? '' : resolution, duration ? `${duration}秒` : ''].filter(Boolean).join(' · ') }}</span>
         <component :is="settingsVisible ? IconChevronDown : IconChevronUp" :size="14" aria-hidden="true" />
       </el-button>
     </template>
@@ -19,21 +19,35 @@
             <el-option v-for="item in durations" :key="item" :value="item" :label="`${item}秒`" />
           </el-select>
         </div>
-        <div v-if="resolutions.length" class="outputField">
+        <div v-if="resolutions.length && !model?.videoSizes?.length" class="outputField">
           <div class="sectionLabel">分辨率</div>
           <el-select v-model="resolution" :disabled="disabled" :teleported="false" aria-label="视频分辨率">
             <el-option v-for="item in resolutions" :key="item" :value="item" :label="item" />
           </el-select>
         </div>
       </div>
-      <div class="sectionLabel">通用比例</div>
-      <div class="ratioOptions" role="group" aria-label="视频比例">
+      <div v-if="model?.videoSizes?.length" class="sectionLabel">输出尺寸</div>
+      <el-select v-if="model?.videoSizes?.length" v-model="videoSize" :disabled="disabled" :teleported="false" aria-label="视频输出尺寸">
+        <el-option v-for="item in model.videoSizes" :key="item" :value="item" :label="item" />
+      </el-select>
+      <div v-if="!model?.videoSizes?.length" class="sectionLabel">通用比例</div>
+      <div v-if="!model?.videoSizes?.length" class="ratioOptions" role="group" aria-label="视频比例">
         <el-button v-for="item in ratios" :key="item" class="ratioButton" :disabled="disabled" :aria-label="`比例 ${item}`" :aria-pressed="ratio === item" @click="ratio = item">
           <span class="ratioContent">
             <span class="ratioShape" :style="ratioStyle(item)" aria-hidden="true" />
             <span>{{ item }}</span>
           </span>
         </el-button>
+      </div>
+      <div v-for="item in model?.videoParameters ?? []" :key="item.field" class="parameterField">
+        <div class="sectionLabel">{{ item.label }}（{{ item.min }}–{{ item.max }}）</div>
+        <el-input
+          :modelValue="videoParameters[item.field] ?? ''"
+          :disabled="disabled"
+          inputmode="numeric"
+          :aria-label="item.label"
+          placeholder="使用服务默认值"
+          @update:modelValue="videoParameters = { ...videoParameters, [item.field]: $event }" />
       </div>
       <div v-if="model?.audio === 'optional'" class="audioOption">
         <span class="sectionLabel">生成音频</span>
@@ -45,7 +59,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { ElButton, ElPopover, ElSelect, ElOption, ElSwitch } from "element-plus";
+import { ElButton, ElPopover, ElSelect, ElOption, ElSwitch, ElInput } from "element-plus";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-vue";
 import type { NodeMediaModel } from "@toonflow/nodes-scaffold/runtime";
 
@@ -56,6 +70,8 @@ const resolution = defineModel<string>("resolution", { required: true });
 const ratio = defineModel<string>("ratio", { required: true });
 const mode = defineModel<string>("mode", { required: true });
 const generateAudio = defineModel<boolean>("generateAudio", { required: true });
+const videoSize = defineModel<string>("videoSize", { required: true });
+const videoParameters = defineModel<Record<string, string>>("videoParameters", { required: true });
 const modeLabels: Record<string, string> = {
   text: "文生视频", singleImage: "单图参考", startEndRequired: "首尾帧必填", endFrameOptional: "尾帧可选", startFrameOptional: "首帧可选",
 };
@@ -148,5 +164,7 @@ function ratioStyle(value: string) {
     margin-top: 14px;
     .sectionLabel { margin: 0; }
   }
+
+  .parameterField { margin-top: 14px; }
 }
 </style>

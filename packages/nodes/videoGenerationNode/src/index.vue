@@ -48,6 +48,19 @@
           v-model="refList"
           @preview="setReferencePreview"
           @remove="removeReference" />
+        <div v-if="selectedModel?.videoSizes?.length && videoReferences.length" class="videoReferenceOptions">
+          <div v-for="item in videoReferences" :key="referenceKey(item.value)" class="videoReferenceOption">
+            <span>参考 {{ item.number }} 视频声音</span>
+            <el-select :modelValue="videoKind(item.value)" :disabled="generating || deleting" aria-label="视频参考声音模式" @update:modelValue="setVideoKind(item.value, $event)">
+              <el-option label="仅参考画面" value="silentVideo" />
+              <el-option label="保留原音轨" value="video" />
+              <el-option label="搭配指定音频" value="videoWithAudio" />
+            </el-select>
+            <el-select v-if="videoKind(item.value) === 'videoWithAudio'" :modelValue="videoAudioNumber(item.value)" :disabled="generating || deleting" placeholder="选择音频参考" aria-label="配对音频参考" @update:modelValue="setVideoAudio(item.value, $event)">
+              <el-option v-for="audio in audioReferences" :key="audio.number" :label="`参考 ${audio.number}`" :value="audio.number" />
+            </el-select>
+          </div>
+        </div>
         <div v-if="frameMode" class="referenceHint">
           {{ selectedMode === "startFrameOptional" ? "仅一张图片时作为尾帧；两张图片按顺序作为首帧、尾帧" : "图片引用按顺序作为首帧、尾帧" }}
         </div>
@@ -79,6 +92,8 @@
             v-model:ratio="data.ratio"
             v-model:mode="data.mode"
             v-model:generateAudio="data.generateAudio"
+            v-model:videoSize="data.videoSize"
+            v-model:videoParameters="data.videoParameters"
             :ratios="ratioOptions"
             :model="selectedModel"
             :disabled="generating || deleting || !selectedModel" />
@@ -88,8 +103,8 @@
               class="sendButton"
               :icon="generating ? IconPlayerStop : IconArrowUp"
               :disabled="deleting || uploading || (!generating && (!generationPrompt || !selectedModel))"
-              :title="generating ? '停止生成' : '生成视频'"
-              :aria-label="generating ? '停止生成' : '生成视频'"
+              :title="generating ? selectedModel?.videoSizes?.length ? '停止等待（本地烧制继续）' : '停止生成' : '生成视频'"
+              :aria-label="generating ? selectedModel?.videoSizes?.length ? '停止等待（本地烧制继续）' : '停止生成' : '生成视频'"
               @click="generating ? generationController?.abort() : startGeneration().catch((error) => showNodeError(error, '视频生成失败'))" />
           </div>
         </div>
@@ -103,7 +118,7 @@
 import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from "vue";
 import { ElButton, ElCard, ElSelect, ElOption, ElOptionGroup, ElLoading, ElDropdown, ElDropdownMenu, ElDropdownItem } from "element-plus";
 import { IconCameraAi, IconSparkles, IconArrowUp, IconPlayerStop, IconTransfer, IconMusic, IconLayersSubtract, IconScissors, IconMovie, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
-import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeVideoRequest, type NodeHandle } from "@toonflow/nodes-scaffold/runtime";
+import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeVideoRequest, type NodeHandle, type NodeInputValue } from "@toonflow/nodes-scaffold/runtime";
 import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useNodeGeneration } from "@toonflow/node-shared/useNodeGeneration";
@@ -129,7 +144,8 @@ const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals 
   label: "视频生成",
 });
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
-const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean });
+type VideoKind = "silentVideo" | "video" | "videoWithAudio";
+const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean; videoSize: string; videoParameters: Record<string, string>; videoReferenceSettings: Record<string, { kind: VideoKind; audioKey?: string }> });
 data.value.prompt ??= "";
 data.value.promptModel ??= [];
 data.value.model ??= "";
@@ -137,6 +153,9 @@ data.value.resolution ??= "";
 data.value.mode ??= "";
 data.value.generateAudio ??= true;
 data.value.ratio ??= "9:16";
+data.value.videoSize ??= "";
+data.value.videoParameters ??= {};
+data.value.videoReferenceSettings ??= {};
 const { refList, referenceMentions, setReferencePreview, removeReference } = useNodeReferences();
 const models = ref<NodeMediaModel[]>([]);
 const modelsLoading = ref(false);
@@ -157,6 +176,26 @@ const ratioOptions = ["16:9", "9:16", "1:1", "4:3", "3:4"];
 const selectedModel = computed(() => models.value.find((item) => JSON.stringify([item.providerId, item.modelId]) === data.value.model));
 const selectedMode = computed(() => selectedModel.value?.mode?.find((item) => JSON.stringify(item) === data.value.mode) as NodeVideoRequest["mode"]);
 const frameMode = computed(() => ["startEndRequired", "endFrameOptional", "startFrameOptional"].includes(String(selectedMode.value)));
+const videoReferences = computed(() => refList.value.flatMap((item, index) => item.dataType === "VIDEO" ? [{ value: item, number: index + 1 }] : []));
+const audioReferences = computed(() => refList.value.flatMap((item, index) => item.dataType === "AUDIO" ? [{ value: item, number: index + 1 }] : []));
+
+function referenceKey(item: NodeInputValue) { return JSON.stringify([item.source, item.sourceHandle]); }
+function videoKind(item: NodeInputValue): VideoKind { return data.value.videoReferenceSettings[referenceKey(item)]?.kind ?? "silentVideo"; }
+function videoAudioNumber(item: NodeInputValue) {
+  const audioKey = data.value.videoReferenceSettings[referenceKey(item)]?.audioKey;
+  return audioReferences.value.find(audio => referenceKey(audio.value) === audioKey)?.number;
+}
+function setVideoKind(item: NodeInputValue, kind: string) {
+  if (kind !== "silentVideo" && kind !== "video" && kind !== "videoWithAudio") return;
+  data.value.videoReferenceSettings[referenceKey(item)] = { kind };
+}
+function setVideoAudio(item: NodeInputValue, audioNumber: string | number) {
+  const number = Number(audioNumber);
+  if (!Number.isInteger(number) || number < 1) return;
+  const audio = audioReferences.value.find(item => item.number === number);
+  if (!audio) return;
+  data.value.videoReferenceSettings[referenceKey(item)] = { kind: "videoWithAudio", audioKey: referenceKey(audio.value) };
+}
 const mediaCounts = computed(() => ({
   image: refList.value.filter((item) => item.dataType === "IMAGE").length,
   video: refList.value.filter((item) => item.dataType === "VIDEO").length,
@@ -167,7 +206,11 @@ const matchingModes = computed(() => getMatchingModes(selectedModel.value));
 function getMatchingModes(choice?: NodeMediaModel) {
   return (choice?.mode ?? []).filter((mode) => {
     const { image, video, audio } = mediaCounts.value;
-    if (Array.isArray(mode)) return image + video + audio > 0 && Object.entries(mediaCounts.value).every(([type, count]) =>
+    const pairedAudio = new Set(videoReferences.value.flatMap(item => videoKind(item.value) === "videoWithAudio" ? [videoAudioNumber(item.value)] : []).filter((number): number is number => number !== undefined)).size;
+    if (Array.isArray(mode)) return image + video + audio > 0
+      && (!choice?.videoReferenceLimits || (image + video + audio - pairedAudio <= choice.videoReferenceLimits.total
+        && (!choice.videoReferenceLimits.audioRequiresVisual || !audio || image + video > 0)))
+      && Object.entries(mediaCounts.value).every(([type, count]) =>
       count <= Number(mode.find((item) => item.startsWith(`${type}Reference:`))?.split(":")[1] ?? 0)
     );
     if (mode === "text") return image + video + audio === 0;
@@ -204,6 +247,7 @@ watch([selectedModel, () => data.value.duration], ([choice]) => {
   const resolutions = getResolutions(choice, data.value.duration);
   if (!resolutions.includes(data.value.resolution)) data.value.resolution = resolutions[0] ?? "";
   if (!ratioOptions.includes(data.value.ratio)) data.value.ratio = "9:16";
+  if (choice.videoSizes?.length && !choice.videoSizes.includes(data.value.videoSize)) data.value.videoSize = choice.videoSizes[0]!;
   if (choice.audio !== "optional") data.value.generateAudio = choice.audio === true;
 }, { flush: "sync" });
 const modelGroups = computed(() => groupNodeModels(models.value));
@@ -215,6 +259,67 @@ const generationPrompt = computed(() =>
     .filter(Boolean)
     .join("\n\n")
 );
+
+function videoOptions(choice: NodeMediaModel) {
+  if (!choice.videoSizes?.length && !choice.videoParameters?.length) return undefined;
+  const other: Record<string, string | number> = {};
+  if (choice.videoSizes?.length) other.size = data.value.videoSize || choice.videoSizes[0]!;
+  for (const item of choice.videoParameters ?? []) {
+    const raw = data.value.videoParameters[item.field]?.trim();
+    if (raw) other[item.field] = item.type === "integer" ? Number(raw) : raw;
+  }
+  return other;
+}
+
+function validateVideoOptions(choice: NodeMediaModel, size = data.value.videoSize, parameters = data.value.videoParameters) {
+  if (choice.videoSizes?.length && !choice.videoSizes.includes(size)) throw new Error("请选择当前模型支持的输出尺寸");
+  for (const item of choice.videoParameters ?? []) {
+    const raw = parameters[item.field]?.trim();
+    if (!raw) continue;
+    if (!/^\d+$/.test(raw)) throw new Error(`${item.label} 须为非负整数`);
+    if (item.type === "uint64") {
+      if (BigInt(raw) < BigInt(item.min) || BigInt(raw) > BigInt(item.max)) throw new Error(`${item.label} 超出允许范围`);
+    } else if (!Number.isSafeInteger(Number(raw)) || Number(raw) < Number(item.min) || Number(raw) > Number(item.max)) {
+      throw new Error(`${item.label} 超出允许范围`);
+    }
+  }
+}
+
+function validateVideoReferences(choice: NodeMediaModel, settings = data.value.videoReferenceSettings) {
+  if (!choice.videoReferenceLimits) return;
+  const audioKeys = new Set(audioReferences.value.map(item => referenceKey(item.value)));
+  const paired = new Set<string>();
+  let audioCount = audioReferences.value.length;
+  for (const item of videoReferences.value) {
+    const setting = settings[referenceKey(item.value)];
+    if (!setting || setting.kind === "silentVideo") continue;
+    if (setting.kind === "videoWithAudio") {
+      if (!setting.audioKey || !audioKeys.has(setting.audioKey) || paired.has(setting.audioKey)) throw new Error(`视频参考 ${item.number} 需要选择未被占用的音频参考`);
+      paired.add(setting.audioKey);
+    } else if (setting.kind !== "video") throw new Error(`视频参考 ${item.number} 声音模式无效`);
+    else audioCount++;
+  }
+  const audioLimit = Number((choice.mode?.find(Array.isArray) as string[] | undefined)?.find(item => item.startsWith("audioReference:"))?.split(":")[1] ?? 0);
+  if (audioCount > audioLimit) throw new Error(`H3 最多接收 ${audioLimit} 路参考音频`);
+}
+
+function referenceBindings(): NodeVideoRequest["referenceBindings"] {
+  const indexes = { image: 0, video: 0, audio: 0 };
+  return refList.value.flatMap<NonNullable<NodeVideoRequest["referenceBindings"]>[number]>((item, index) => {
+    const number = index + 1;
+    if (item.dataType === "STRING") return [{ number, type: "text" as const }];
+    const type = item.dataType === "IMAGE" ? "image" : item.dataType === "VIDEO" ? "video" : item.dataType === "AUDIO" ? "audio" : undefined;
+    if (!type) return [];
+    const position = indexes[type]++;
+    if (type === "image" && frameMode.value) return [{ number, type, role: selectedMode.value === "startFrameOptional" && mediaCounts.value.image === 1 ? "lastFrame" as const : position === 0 ? "firstFrame" as const : "lastFrame" as const }];
+    if (type === "video") {
+      const setting = data.value.videoReferenceSettings[referenceKey(item)];
+      const audioNumber = videoAudioNumber(item);
+      return [{ number, type, index: position, kind: setting?.kind ?? "silentVideo", ...(audioNumber ? { audioNumber } : {}) }];
+    }
+    return [{ number, type, index: position }];
+  });
+}
 const generationInput = computed<Omit<NodeVideoRequest, "directory"> | undefined>(() => {
   const choice = selectedModel.value;
   if (!choice) return;
@@ -225,8 +330,10 @@ const generationInput = computed<Omit<NodeVideoRequest, "directory"> | undefined
     prompt: generationPrompt.value,
     mode: selectedMode.value,
     duration: data.value.duration,
-    resolution: data.value.resolution || undefined,
-    ratio: data.value.ratio,
+    resolution: choice.videoSizes?.length ? undefined : data.value.resolution || undefined,
+    ratio: choice.videoSizes?.length ? undefined : data.value.ratio,
+    other: videoOptions(choice),
+    referenceBindings: choice.videoSizes?.length ? referenceBindings() : undefined,
     generateAudio: choice.audio === "optional" ? data.value.generateAudio : choice.audio,
     outputDirectory: `assets/${id}`,
     images: frameMode.value ? undefined : images,
@@ -316,6 +423,8 @@ async function startGeneration() {
   if (!generationPrompt.value) throw new Error("请输入生成提示词");
   if (refList.value.some(item => item.value === undefined)) throw new Error("引用节点暂无内容，请先补充引用内容");
   if (choice.mode?.length && !matchingModes.value.length) throw new Error("当前模型没有适合这些参考素材的生成模式，请更换模型或调整引用");
+  validateVideoOptions(choice);
+  validateVideoReferences(choice);
   const workspace = files.getWorkspaceFiles();
   const controller = new AbortController();
   generationController = controller;
@@ -367,10 +476,13 @@ function getConfig() {
       providerId: selectedModel.value?.providerId ?? "",
       modelId: selectedModel.value?.modelId ?? "",
       duration: data.value.duration,
-      resolution: data.value.resolution,
-      ratio: data.value.ratio,
+      resolution: selectedModel.value?.videoSizes?.length ? undefined : data.value.resolution,
+      ratio: selectedModel.value?.videoSizes?.length ? undefined : data.value.ratio,
       mode: selectedMode.value,
       generateAudio: data.value.generateAudio,
+      videoSize: data.value.videoSize,
+      videoParameters: data.value.videoParameters,
+      videoReferences: videoReferences.value.map(item => ({ number: item.number, kind: videoKind(item.value), audioNumber: videoAudioNumber(item.value) })),
     },
     models: models.value,
     ratios: ratioOptions,
@@ -380,7 +492,7 @@ function getConfig() {
 
 nodeTools.register({
   name: "getConfig",
-  description: "读取此视频生成节点的当前配置、可选视频模型能力、通用比例及适合当前引用的模式，不含密钥；时长与分辨率须符合 durationResolutionMap",
+  description: "读取此视频生成节点的当前配置、可选视频模型能力、通用比例及适合当前引用的模式，不含密钥；H3 尺寸见 videoSizes，逐任务参数见 videoParameters",
   parameters: z.strictObject({}),
   async execute(_args, { signal }) {
     signal?.throwIfAborted();
@@ -392,7 +504,7 @@ nodeTools.register({
 
 nodeTools.register({
   name: "setConfig",
-  description: "修改此视频生成节点的模型、时长、分辨率、比例、模式或声音；先用 getConfig 查询能力，providerId 与 modelId 必须同时提供；mode 使用返回的原始字符串或数组，须匹配当前引用；不修改提示词、不启动生成",
+  description: "修改此视频生成节点的模型、时长、分辨率、比例、模式、声音、可选尺寸、逐任务参数或视频参考声音模式；先用 getConfig 查询能力，providerId 与 modelId 必须同时提供；mode 使用返回的原始字符串或数组，须匹配当前引用；不修改提示词、不启动生成",
   parameters: z.strictObject({
     providerId: z.string().min(1).optional(),
     modelId: z.string().min(1).optional(),
@@ -401,6 +513,9 @@ nodeTools.register({
     ratio: z.enum(ratioOptions).optional(),
     mode: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
     generateAudio: z.boolean().optional(),
+    videoSize: z.string().min(1).optional(),
+    videoParameters: z.record(z.string(), z.string()).optional(),
+    videoReferences: z.array(z.strictObject({ number: z.number().int().positive(), kind: z.enum(["silentVideo", "video", "videoWithAudio"]), audioNumber: z.number().int().positive().optional() })).optional(),
   }).refine((args) => (args.providerId === undefined) === (args.modelId === undefined), "providerId 与 modelId 必须同时提供"),
   async execute(args, { signal }) {
     signal?.throwIfAborted();
@@ -411,6 +526,7 @@ nodeTools.register({
     const choice = args.modelId === undefined ? selectedModel.value
       : models.value.find((item) => item.providerId === args.providerId && item.modelId === args.modelId);
     if (!choice) throw new Error("请选择 getConfig 返回的有效视频模型");
+    if (choice.videoSizes?.length && (args.resolution !== undefined || args.ratio !== undefined)) throw new Error("当前模型通过 videoSize 选择宽高，不使用分辨率或比例字段");
     const durations = getDurations(choice);
     if (args.duration !== undefined && !durations.includes(args.duration)) throw new Error(`当前模型不支持时长 ${args.duration}，可选：${durations.join("、")}`);
     const duration = args.duration ?? (durations.includes(data.value.duration!) ? data.value.duration : durations[0]);
@@ -419,12 +535,35 @@ nodeTools.register({
     const resolution = args.resolution ?? (resolutions.includes(data.value.resolution) ? data.value.resolution : resolutions[0] ?? "");
     if (args.mode !== undefined && !getMatchingModes(choice).some((item) => JSON.stringify(item) === JSON.stringify(args.mode))) throw new Error("所选模式不受当前模型支持或不适用于当前引用，请根据模型能力及已连接素材选择");
     if (args.generateAudio !== undefined && choice.audio !== "optional" && args.generateAudio !== (choice.audio === true)) throw new Error("当前模型不支持切换声音，请查看 getConfig 返回的 audio 能力");
+    const videoSize = args.videoSize ?? (choice.videoSizes?.includes(data.value.videoSize) ? data.value.videoSize : choice.videoSizes?.[0] ?? "");
+    const videoParameters = args.videoParameters ?? data.value.videoParameters;
+    if (args.videoSize !== undefined && !choice.videoSizes?.length) throw new Error("当前模型不支持独立视频尺寸");
+    if (args.videoParameters !== undefined && !choice.videoParameters?.length) throw new Error("当前模型不支持逐任务视频参数");
+    if (args.videoParameters && Object.keys(args.videoParameters).some(field => !choice.videoParameters?.some(item => item.field === field))) throw new Error("当前模型不支持所填视频参数");
+    validateVideoOptions(choice, videoSize, videoParameters);
+    const nextVideoReferences = { ...data.value.videoReferenceSettings };
+    if (args.videoReferences !== undefined) {
+      if (!choice.videoReferenceLimits) throw new Error("当前模型不支持视频参考声音配置");
+      const numbers = new Set<number>();
+      for (const setting of args.videoReferences) {
+        if (numbers.has(setting.number)) throw new Error("视频参考编号重复");
+        numbers.add(setting.number);
+        const item = videoReferences.value.find(item => item.number === setting.number);
+        if (!item) throw new Error(`视频参考 ${setting.number} 不存在`);
+        const audio = audioReferences.value.find(item => item.number === setting.audioNumber);
+        nextVideoReferences[referenceKey(item.value)] = { kind: setting.kind, ...(audio ? { audioKey: referenceKey(audio.value) } : {}) };
+      }
+      validateVideoReferences(choice, nextVideoReferences);
+    }
     data.value.model = JSON.stringify([choice.providerId, choice.modelId]);
     data.value.duration = duration;
     data.value.resolution = resolution;
     if (args.ratio !== undefined) data.value.ratio = args.ratio;
     if (args.mode !== undefined) data.value.mode = JSON.stringify(args.mode);
     if (args.generateAudio !== undefined) data.value.generateAudio = args.generateAudio;
+    data.value.videoSize = videoSize;
+    if (args.videoParameters !== undefined) data.value.videoParameters = videoParameters;
+    if (args.videoReferences !== undefined) data.value.videoReferenceSettings = nextVideoReferences;
     return getConfig();
   },
 });
@@ -443,7 +582,7 @@ nodeTools.register({
 
 nodeTools.register({
   name: "generateVideo",
-  description: "启动此节点的后台视频生成，使用当前提示词、模型、模式、时长、分辨率、比例和参考素材；立即返回已开始，用 getGenerationStatus 查询完成结果，cancelGeneration 停止生成",
+  description: "启动此节点的后台视频生成，使用当前提示词、模型、模式、时长、尺寸、逐任务参数和参考素材；立即返回已开始，用 getGenerationStatus 查询完成结果。本地 H3 的 cancelGeneration 只停止 Toonflow 等待，服务端烧制继续",
   parameters: z.strictObject({}),
   execute(_args, { signal }) {
     signal?.throwIfAborted();
@@ -475,6 +614,20 @@ nodeTools.register({
 }
 
 .promptCard {
+  .videoReferenceOptions {
+    margin: 8px 0;
+
+    .videoReferenceOption {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+
+      > span { flex-shrink: 0; }
+      > .el-select { width: 150px; }
+    }
+  }
+
   .referenceHint {
     margin: 8px 0;
     color: var(--el-text-color-secondary);

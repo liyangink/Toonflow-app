@@ -34,6 +34,15 @@ export const videoGenerationSchema = z.strictObject({
   resolution: z.string().trim().min(1).max(64).optional(),
   duration: z.number().finite().positive().max(3600).optional(),
   generateAudio: z.boolean().optional(),
+  other: z.record(z.string().min(1).max(64), z.union([z.string().max(64), z.number().finite()])).optional(),
+  referenceBindings: z.array(z.strictObject({
+    number: z.number().int().positive().max(256),
+    type: z.enum(["image", "video", "audio", "text"]),
+    index: z.number().int().nonnegative().max(63).optional(),
+    role: z.enum(["firstFrame", "lastFrame"]).optional(),
+    kind: z.enum(["silentVideo", "video", "videoWithAudio"]).optional(),
+    audioNumber: z.number().int().positive().max(256).optional(),
+  })).max(256).optional(),
   mode: z.union([
     z.enum(["singleImage", "startEndRequired", "endFrameOptional", "startFrameOptional", "text"]),
     z.array(referenceMode).min(1).max(3),
