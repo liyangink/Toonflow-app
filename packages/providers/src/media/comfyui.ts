@@ -28,6 +28,15 @@ const workflows: Record<string, Workflow> = {
         ]
       }
     },
+    "491": {
+      "class_type": "easy cleanGpuUsed",
+      "inputs": {
+        "anything": [
+          "461",
+          0
+        ]
+      }
+    },
     "459:457": {
       "class_type": "VAEDecode",
       "inputs": {
@@ -229,6 +238,15 @@ const workflows: Record<string, Workflow> = {
         "image": ""
       }
     },
+    "519": {
+      "class_type": "easy cleanGpuUsed",
+      "inputs": {
+        "anything": [
+          "461",
+          0
+        ]
+      }
+    },
     "459:457": {
       "class_type": "VAEDecode",
       "inputs": {
@@ -327,22 +345,6 @@ const workflows: Record<string, Workflow> = {
           "459:454",
           0
         ],
-        "images.image_7": [
-          "513",
-          0
-        ],
-        "images.image_8": [
-          "513",
-          0
-        ],
-        "images.image_9": [
-          "514",
-          0
-        ],
-        "images.image_10": [
-          "515",
-          0
-        ],
         "images.image_2": [
           "508",
           0
@@ -361,6 +363,22 @@ const workflows: Record<string, Workflow> = {
         ],
         "images.image_6": [
           "512",
+          0
+        ],
+        "images.image_7": [
+          "513",
+          0
+        ],
+        "images.image_8": [
+          "513",
+          0
+        ],
+        "images.image_9": [
+          "514",
+          0
+        ],
+        "images.image_10": [
+          "515",
           0
         ]
       }
@@ -422,7 +440,6 @@ const workflows: Record<string, Workflow> = {
         "format": "auto",
         "format.codec": "auto",
         "codec": "auto",
-        "video-preview": "",
         "video": [
           "140:130",
           0
@@ -441,12 +458,22 @@ const workflows: Record<string, Workflow> = {
         "image": ""
       }
     },
+    "155": {
+      "class_type": "easy cleanGpuUsed",
+      "inputs": {
+        "anything": [
+          "92",
+          0
+        ]
+      }
+    },
     "140:130": {
       "class_type": "CreateVideo",
       "inputs": {
         "fps": 24,
         "bit_depth": "auto",
         "color_space": "sRGB",
+        "chroma_subsampling": "none",
         "codec": "none",
         "images": [
           "140:122",
@@ -792,6 +819,7 @@ const workflows: Record<string, Workflow> = {
         "fps": 24,
         "bit_depth": 8,
         "color_space": "sRGB",
+        "chroma_subsampling": "none",
         "codec": "none",
         "images": [
           "122",
@@ -1006,6 +1034,15 @@ const workflows: Record<string, Workflow> = {
         "skip_first_frames": 0,
         "select_every_nth": 1
       }
+    },
+    "169": {
+      "class_type": "easy cleanGpuUsed",
+      "inputs": {
+        "anything": [
+          "92",
+          0
+        ]
+      }
     }
   },
   "realEsrganX2": {
@@ -1053,6 +1090,7 @@ const workflows: Record<string, Workflow> = {
         ],
         "bit_depth": "auto",
         "color_space": "sRGB",
+        "chroma_subsampling": "none",
         "codec": "none",
         "images": [
           "2",
@@ -1071,9 +1109,17 @@ const workflows: Record<string, Workflow> = {
         "format": "auto",
         "format.codec": "auto",
         "codec": "auto",
-        "video-preview": "",
         "video": [
           "11",
+          0
+        ]
+      }
+    },
+    "13": {
+      "class_type": "easy cleanGpuUsed",
+      "inputs": {
+        "anything": [
+          "12",
           0
         ]
       }
@@ -1225,7 +1271,7 @@ function videoPrompt(request: ReferencedVideoRequest) {
 }
 
 async function submit(context: ProviderContext, workflow: Workflow, outputNode: string, mediaType: "image" | "video", signal: AbortSignal) {
-  // 仅提交输出节点的依赖，去掉未使用的示例素材与界面辅助节点。
+  // 保留保存结果及末尾清理节点的依赖，去掉未使用的示例素材与界面辅助节点。
   const prompt: Workflow = {};
   function visit(id: string) {
     if (prompt[id]) return;
@@ -1235,6 +1281,9 @@ async function submit(context: ProviderContext, workflow: Workflow, outputNode: 
     for (const value of Object.values(node.inputs)) if (Array.isArray(value) && value.length === 2 && typeof value[0] === "string" && typeof value[1] === "number") visit(value[0]);
   }
   visit(outputNode);
+  for (const [id, node] of Object.entries(workflow)) {
+    if (node.class_type === "easy cleanGpuUsed") visit(id);
+  }
   const data = await json(context, "/prompt", signal, { prompt }) as { prompt_id?: string };
   if (!data.prompt_id) throw new Error(`ComfyUI 未返回任务 ID：${context.tool.errorMessage(data)}`);
   const task: ComfyTask = { promptId: data.prompt_id, mediaType, outputNode, server: connection(context) };
@@ -1246,8 +1295,8 @@ export default {
   id: "comfyui",
   label: "ComfyUI 本地工作流",
   icon: "",
-  version: "1.0.0",
-  readme: "连接运行中的 ComfyUI，默认 http://127.0.0.1:8188。须安装原工作流所需模型与自定义节点。支持 Qwen 文生图/最多10张参考图编辑、Pika 首尾帧/多参考视频、RealESRGAN 视频二倍放大（引用一个视频，保留音轨和帧率）。提示词直接传入模型。图片编辑默认沿用首张参考图尺寸，选择比例/尺寸时使用指定尺寸。Pika 按24fps对齐帧数，实际时长可能略有差异。取消仅停止 Toonflow 等待，不中断 ComfyUI 中其他任务；恢复依赖 ComfyUI 保留原任务历史。可选令牌用于反向代理 Bearer 鉴权。",
+  version: "1.0.1",
+  readme: "连接运行中的 ComfyUI，默认 http://127.0.0.1:8188。须安装原工作流所需模型与自定义节点（含 ComfyUI-Easy-Use 的 easy cleanGpuUsed）。每个工作流在保存结果后执行清理节点。支持 Qwen 文生图/最多10张参考图编辑、Pika 首尾帧/多参考视频、RealESRGAN 视频二倍放大（引用一个视频，保留音轨和帧率）。提示词直接传入模型。图片编辑默认沿用首张参考图尺寸，选择比例/尺寸时使用指定尺寸。Pika 按24fps对齐帧数，实际时长可能略有差异。取消仅停止 Toonflow 等待，不中断 ComfyUI 中其他任务；恢复依赖 ComfyUI 保留原任务历史。可选令牌用于反向代理 Bearer 鉴权。",
   rules: [
     { type: "input", field: "baseUrl", title: "ComfyUI 地址", value: "http://127.0.0.1:8188" },
     { type: "input", field: "token", title: "访问令牌（可选）", value: "", props: { type: "password", showPassword: true } },
